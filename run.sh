@@ -1,4 +1,4 @@
 #!/bin/bash
 
-nohup python3 /home/linaro/Documents/server/pyserver.py > /home/linaro/Documents/server/log/python_log_nh.txt &
+nohup python3 pyserver.py > /dev/null 2>&1 &
 echo "Start Running Server!"

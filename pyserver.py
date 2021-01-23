@@ -1,13 +1,75 @@
 #!/usr/bin/env python3
 # coding: UTF-8
-import requests, socket, re
-import os, json, datetime, subprocess
+import requests, socket, re, time
+import os, json, datetime, subprocess, calendar
 from requests_oauthlib import OAuth1Session
-from http.server import HTTPServer, SimpleHTTPRequestHandler
 from bs4 import BeautifulSoup
 import collections as cl
+from flask import Flask, render_template, request, jsonify
 
 from py_var.var import *
+
+app = Flask( __name__ )
+
+@app.route( '/', methods=[ 'POST' ] ) # POSTメソッドを明示
+def RcvPost():
+	# 処理時間計測(開始)
+	proc_time = time.time()
+	# 応答用テキスト
+	rcv_txt = '0'
+	rcv_txt = rcv_txt.encode( 'utf-8' )
+	
+	if request.method == 'POST':
+		# リクエスト取得
+		req = request.get_data()
+		req = req.decode( 'utf-8' )
+		
+		# IP取得
+		host = request.remote_addr
+		# 現在日時取得
+		log_time = datetime.datetime.now().strftime( '%Y-%m-%d %H:%M:%S' )
+		
+		# 各リクエスト別の処理
+		if 'weather' == req:
+			req = req + send_jmadata()
+		
+		if 'temp_alert' == req:
+			temp_alert( log_time )
+
+		if 'wnews' == req:
+			if create_wnewsdata() and os.path.isfile( wnews_path ):
+				# 日時データ取得
+				with open( wnews_path, mode='r') as f:
+					# jsonファイルよりデータ取得
+					rcv_txt = json.load( f )
+
+		if 'datelist' == req:
+			rcv_txt = res_datelist()
+			rcv_txt = rcv_txt.encode( 'utf-8' )
+		
+		if 'create' == req:
+			req = req + create_dlist()
+		
+		# 処理時間計測(終了)
+		proc_time = time.time() - proc_time
+		proc_time = str( '{:.3f}'.format( proc_time ) ) + 's' # 小数点以下を3桁まで表示
+
+		# 日付+IP+リクエストでログ書き込み
+		if os.path.isfile( logtxt_path ):
+			# 既にファイルが存在する場合は追記
+			with open( logtxt_path, mode='a') as f:
+				write_log = log_time + ' ' + 'IP=' + host.ljust( 13 ) + ' ' + 'POST=' + str( req ).ljust( 19 ) + ' ' + 'TIME=' + proc_time + '\n'
+				f.write( write_log )
+		else:
+			# 存在しない場合は新規作成
+			# フォルダが無い場合作成(作成済みでもok)
+			os.makedirs( log_path, exist_ok=True )
+			# ファイルを新規作成
+			with open( logtxt_path, mode='w') as f:
+				write_log = log_time + ' ' + 'IP=' + host.ljust( 13 ) + ' ' + 'POST=' + str( req ).ljust( 19 ) + ' ' + 'TIME=' + proc_time + '\n'
+				f.write( write_log )
+	
+	return rcv_txt
 
 # 処理内容      ：Webページアクセス、コード出力
 # 備考          ：Webページ取得後、HTMLを1行ずつ出力
@@ -24,16 +86,25 @@ def get_jmahtml():
 #                 ただし、同一時間内のWebページアクセスは一度まで(JSONファイル保存データで制御)
 # 依存ライブラリ：socket, re, datetime, json, collections
 def send_jmadata():
+	# 現在時刻を初期値に設定
 	now_time    = datetime.datetime.now().strftime( '%Y-%m-%d %H:%M:%S' )
 	last_update = now_time
 	last_access = now_time
 	
-	read_hour = 255
+	# 時間比較用(読み出し変数は失敗時を想定し、存在しない時間の初期値)
+	read_hour = 32
 	now_hour  = datetime.datetime.strptime( now_time, '%Y-%m-%d %H:%M:%S' ).hour
 	
-	temp_data = ''
-	humi_data = ''
-	baro_data = ''
+	# 気象データ格納変数
+	temp_data = '' # 温度
+	humi_data = '' # 湿度
+	baro_data = '' # 気圧
+	
+	# レスポンス
+	res = ''
+
+	# フォルダが無い場合作成(作成済みでもok)
+	os.makedirs( json_path, exist_ok=True )
 
 	# 日時データ取得
 	if os.path.isfile( jma_path ):
@@ -43,7 +114,8 @@ def send_jmadata():
 			last_update = rjson_data[ 'last_update' ][ 'timestamp' ]
 			read_hour = datetime.datetime.strptime( last_update, '%Y-%m-%d %H:%M:%S' ).hour
 	
-	if ( read_hour == 255 ) or ( read_hour != now_hour ):
+	# jsonファイルが未作成 or 最終更新時間が現在の時間ではない
+	if ( read_hour == 32 ) or ( read_hour != now_hour ):
 		tag_pre = ''
 
 		for tag in get_jmahtml():
@@ -87,9 +159,15 @@ def send_jmadata():
 		with open( jma_path, mode='w' ) as f:
 			# f.write( json.dumps( json_data ) ) # 運用向け(インデント無し)
 			f.write( json.dumps( wjson_data, indent=4 ) )
+		
+		# レスポンス
+		res = '(update)'
+	
+	# jsonファイルが作成済み and 最終更新時間が現在の時間である
 	else:
+		# jsonファイルが作成済みであるため読み出しの失敗は想定しない
 		with open( jma_path, mode='r') as f:
-			# 最終保存時刻を取得
+			# 保存済みのデータを取得
 			rjson_data = json.load( f )
 			temp_data = rjson_data[ 'weather' ][ 'temp' ]
 			humi_data = rjson_data[ 'weather' ][ 'humi' ]
@@ -104,6 +182,9 @@ def send_jmadata():
 		with open( jma_path, mode='w' ) as f:
 			# f.write( json.dumps( json_data ) ) # 運用向け(インデント無し)
 			f.write( json.dumps( wjson_data, indent=4 ) )
+		
+		# レスポンス
+		res = '(not update)'
 
 	# 送信用データの作成
 	send_data1 = humi_data + '%  ' + temp_data
@@ -115,12 +196,16 @@ def send_jmadata():
 
 	with socket.socket( socket.AF_INET, socket.SOCK_DGRAM ) as sock:
 		sock.sendto( send_data2.encode(), ( udp_addr2, udp_port2 ) )
+	
+	return res
 
 # 処理内容      ：Webページアクセス、JSON保存
 # 備考          ：天気予報データを取得後、JSONファイルへ保存
 #                 ページレイアウトが変更される場合があるので都度修正が必要
 # 依存ライブラリ：requests, bs4, json, collections
 def create_wnewsdata():
+	# レスポンス
+	res = False
 	# データ取得
 	html = requests.get( wnews_url, timeout=5.0 )
 
@@ -196,22 +281,32 @@ def create_wnewsdata():
 		for cnt in range( len( time_list ) ):
 			json_data[ time_list[cnt] ] = cl.OrderedDict( { 'temp':temp_list[cnt], 'weather':img_list[cnt] } )
 
+		# フォルダが無い場合作成(作成済みでもok)
+		os.makedirs( json_path, exist_ok=True )
+
 		# JSONファイルへ出力(新規作成 or 上書き)
 		with open( wnews_path, mode='w' ) as f:
 			# f.write( json.dumps( json_data ) ) # 運用向け(インデント無し)
 			f.write( json.dumps( json_data, indent=4 ) )
 
+		# レスポンス
+		res = True
+	
+	return res
+
 # 処理内容      ：テキストデータをTwitterへ投稿
 # 備考          ：temp_alertにて使用
 # 依存ライブラリ：requests_oauthlib
 def tweet( text ):
-	if ( CK != '' ) and ( CS != '' ) and ( AT != '' ) and ( ATS != '' ):
+	try:
 		# 認証
 		twitter = OAuth1Session( CK, CS, AT, ATS )
 		# データ作成
 		text = { 'status' : text }
 		# ツイートする
 		req_media = twitter.post( url_text, params = text )
+	except:
+		pass
 
 # 処理内容      ：テキストデータをTwitterへ投稿、シャットダウン処理
 # 備考          ：ESP系マイコンが高温を検出時に使用
@@ -239,53 +334,48 @@ def res_datelist():
 		# エラー時
 		return '1'
 
-# 処理内容      ：サーバー処理
-# 備考          ：ESP系マイコンの動作により適宜変更を行う
-# 依存ライブラリ：http.server, datetime, os
-class MyHandler( SimpleHTTPRequestHandler ):
-	def common_response( self, txt = '0' ):
-		self.send_response( 200 )
-		self.send_header( 'Content-Type', 'text/plain' )
-		self.end_headers()
-		self.wfile.write( txt.encode( 'utf-8' ) ) # 動作確認用の応答
+# 処理内容      ：日時データ作成
+# 備考          ：現在の年よりESP系マイコン通知用のデータを作成
+# 依存ライブラリ：os, json, datetime, collections, calendar
+def create_dlist():
+	# フォルダが無い場合作成(作成済みでもok)
+	os.makedirs( json_path, exist_ok=True )
+	
+	# 月曜日始めでオブジェクト作成
+	cal = calendar.Calendar( firstweekday=6 )
 
-	# 基本GETは使用しない(通常動作)
-	#def do_GET( self ):
-	#	self.common_response()
+	# コレクション作成
+	date_list = cl.OrderedDict()
+	# 現在の年を取得
+	year = datetime.datetime.now()
+	year = year.year
 
-	# 主にcurlとesp系ボードからのリクエスト用
-	def do_POST( self ):
-		content_length = int( self.headers.get( 'content-length', 0 ) )
-		request = self.rfile.read( content_length )
-		request = request.decode( 'utf-8' )
+	# 月ごと(1～12)でループ
+	for month in range( 1, 13 ):
+		# 月ごとの(日付, 曜日)のタプルが入ったリスト
+		temp_list = cal.itermonthdays2( year, month )
 		
-		# IP取得
-		host, port = self.client_address[:2]
-		# 現在日時取得
-		log_time = datetime.datetime.now().strftime( '%Y-%m-%d %H:%M:%S' )
-		
-		# 各リクエスト別の処理
-		if 'weather' == request:
-			self.common_response() # UDPで応答するため先にレスポンス応答
-			send_jmadata()
-		
-		if 'temp_alert' == request:
-			self.common_response() # レスポンス応答を使用しないため先に処理
-			temp_alert( log_time )
+		# 日付格納リスト
+		day_list = cl.OrderedDict()
 
-		if 'wnews' == request:
-			create_wnewsdata()
-			self.common_response()
+		# 日にちごとでループ
+		for day in temp_list:
+			if 0 < day[0]:
+				if -1 < day[1] < 5: # 月～金曜日か判定
+					day_list[str( day[0] )] = '0'
+				else:
+					day_list[str( day[0] )] = '1'
 
-		if 'datelist' == request:
-			self.common_response( res_datelist() )
+		date_list[str( month )] = day_list
 
-		# 日付+IP+リクエストでログ書き込み
-		if os.path.isfile( logtxt_path ):
-			with open( logtxt_path, mode='a') as f:
-				f.write( log_time + ' ' + 'IP=' + str( host ).ljust( 13 ) + ' ' + 'POST=' + request + '\n' )
+	# JSONファイルへ出力(新規作成 or 上書き)
+	with open( dlist_path, mode='w' ) as f:
+		# f.write( json.dumps( json_data ) ) # 運用向け(インデント無し)
+		f.write( json.dumps( date_list, indent=4 ) )
+	
+	# レスポンス
+	return '(' + str( year ) + ')'
 
 # サーバー起動
-httpd = HTTPServer( ( '', 8080 ), MyHandler )
-httpd.serve_forever()
-
+if __name__ == '__main__':
+	app.run( debug=True, host='0.0.0.0', port=8080, threaded=True )
