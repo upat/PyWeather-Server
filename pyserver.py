@@ -7,6 +7,16 @@ from bs4 import BeautifulSoup
 import collections as cl
 from flask import Flask, render_template, request, jsonify
 
+# chromium用 Selenium
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+# chromium用 Selenium 待機時間用インポート
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+# chromium用 Selenium タイムアウト例外用
+from selenium.common.exceptions import TimeoutException
+
 from py_var.var import *
 
 app = Flask( __name__ )
@@ -20,7 +30,7 @@ def RcvPost():
 	rcv_txt = rcv_txt.encode( 'utf-8' )
 	
 	if request.method == 'POST':
-		# リクエスト取得
+		# リクエスト取得(処理後に処理結果と共にログ出力)
 		req = request.get_data()
 		req = req.decode( 'utf-8' )
 		
@@ -30,25 +40,65 @@ def RcvPost():
 		log_time = datetime.datetime.now().strftime( '%Y-%m-%d %H:%M:%S' )
 		
 		# 各リクエスト別の処理
-		if 'weather' == req:
-			req = req + send_jmadata()
-		
-		if 'temp_alert' == req:
-			temp_alert( log_time )
+		# 気象庁データ送信
+		if 'get_jma' == req:
+			if os.path.isfile( jma_path ):
+				# 日時データ取得
+				with open( jma_path, mode='r') as f:
+					# jsonファイルよりデータ取得
+					json_txt = json.load( f )
 
-		if 'wnews' == req:
-			if create_wnewsdata() and os.path.isfile( wnews_path ):
+					# 応答データ作成
+					rcv_txt = str( json_txt['weather']['baro'] ) + 'hPa ' \
+								+ str( json_txt['weather']['humi'] ) + '% ' \
+								+ str( json_txt['weather']['temp'] )
+					rcv_txt = rcv_txt.encode()
+			else:
+				# ファイルが存在しない場合
+				rcv_txt = '----.-hPa ---% ---.-'	
+				req = req + ( '(fail)' )
+				
+		# 気象庁データ送信(応答データ縮小版)
+		elif 'get_jma_l' == req:
+			if os.path.isfile( jma_path ):
+				# 日時データ取得
+				with open( jma_path, mode='r') as f:
+					# jsonファイルよりデータ取得
+					json_txt = json.load( f )
+					
+					# 応答データ作成
+					rcv_txt = str( json_txt['weather']['humi'] ) + '%  ' \
+								+ str( json_txt['weather']['temp'] )
+					rcv_txt = rcv_txt.encode()
+			else:
+				# ファイルが存在しない場合
+				rcv_txt = '---%  ---.-'
+				req = req + ( '(fail)' )
+			
+		elif 'update_jma' == req:
+			req = req + ( '(' + update_jma() + ')' )
+
+		elif 'get_wnews' == req:
+			if os.path.isfile( wnews_path ):
 				# 日時データ取得
 				with open( wnews_path, mode='r') as f:
 					# jsonファイルよりデータ取得
-					rcv_txt = json.load( f )
+					rcv_txt = f.read()
+					rcv_txt = rcv_txt.encode( 'utf-8' )
+					
+		elif 'update_wnews' == req:
+			if not update_wnews():
+				req = req + ( '(fail)' )
 
-		if 'datelist' == req:
+		elif 'datelist' == req:
 			rcv_txt = res_datelist()
 			rcv_txt = rcv_txt.encode( 'utf-8' )
 		
-		if 'create' == req:
+		elif 'create' == req:
 			req = req + create_dlist()
+		
+		elif 'temp_alert' == req:
+			temp_alert( log_time )
 		
 		# 処理時間計測(終了)
 		proc_time = time.time() - proc_time
@@ -71,37 +121,35 @@ def RcvPost():
 	
 	return rcv_txt
 
-# 処理内容      ：Webページアクセス、コード出力
-# 備考          ：Webページ取得後、HTMLを1行ずつ出力
-#                 send_jmadataにて使用
-# 依存ライブラリ：requests
-def get_jmahtml():
-	html = requests.get( jma_url, timeout=5.0 )
+# 処理内容      ：Webページアクセス、データ抽出・保存
+# 備考          ：温度・湿度・気圧のテキストデータを抽出後、JSONファイルへ保存
+#                 ただし、同一時間内のWebページアクセスは15分経過するまで不可(JSONファイル保存データで制御)
+# 依存ライブラリ：re, datetime, json, collections, selenium, bs4
+def update_jma():
+	# 日時初期値(テキスト、datetimeオブジェクト)
+	strc_InitTime = '2000-01-01 00:00:00'
+	objc_InitTime = datetime.datetime.strptime( strc_InitTime, '%Y-%m-%d %H:%M:%S' )
+	# 再読み出し許可の時間(900秒=15分)
+	u2c_IntervalSec = 900
+	# 読み出しリトライ上限値
+	u1c_RetryCnt = 3
+	# 現在時刻を取得
+	objc_NowTime = datetime.datetime.now()
+	# レスポンス用テーブル
+	strc_ResText = [ 'OK', 'OK_Err1', 'OK_Err2', 'Fail', 'NotUpdt', 'OthErr' ]
 	
-	for line in html.text.splitlines():
-		yield line
-
-# 処理内容      ：Webページアクセス、データ抽出、UDP送信
-# 備考          ：温度・湿度・気圧のテキストデータを抽出後、設定したIPアドレスへUDP送信
-#                 ただし、同一時間内のWebページアクセスは一度まで(JSONファイル保存データで制御)
-# 依存ライブラリ：socket, re, datetime, json, collections
-def send_jmadata():
-	# 現在時刻を初期値に設定
-	now_time    = datetime.datetime.now().strftime( '%Y-%m-%d %H:%M:%S' )
-	last_update = now_time
-	last_access = now_time
-	
+	# 最終更新日時
+	strt_last_update = strc_InitTime
 	# 時間比較用(読み出し変数は失敗時を想定し、存在しない時間の初期値)
-	read_hour = 32
-	now_hour  = datetime.datetime.strptime( now_time, '%Y-%m-%d %H:%M:%S' ).hour
+	objt_read_time = objc_InitTime
 	
 	# 気象データ格納変数
-	temp_data = '' # 温度
-	humi_data = '' # 湿度
-	baro_data = '' # 気圧
+	strt_temp_data = '--.-'   # 温度
+	strt_humi_data = '--'     # 湿度
+	strt_baro_data = '----.-' # 気圧
 	
-	# レスポンス
-	res = ''
+	# レスポンス用Index
+	u1t_res_idx = 4
 
 	# フォルダが無い場合作成(作成済みでもok)
 	os.makedirs( json_path, exist_ok=True )
@@ -110,100 +158,108 @@ def send_jmadata():
 	if os.path.isfile( jma_path ):
 		with open( jma_path, mode='r') as f:
 			# 最終保存時刻を取得
-			rjson_data = json.load( f )
-			last_update = rjson_data[ 'last_update' ][ 'timestamp' ]
-			read_hour = datetime.datetime.strptime( last_update, '%Y-%m-%d %H:%M:%S' ).hour
+			objt_rjson_data = json.load( f )
+			strt_last_update = objt_rjson_data[ 'last_update' ][ 'timestamp' ]
+			objt_read_time = datetime.datetime.strptime( strt_last_update, '%Y-%m-%d %H:%M:%S' )
+			
+	# 時間差の算出(objc_NowTime > objt_read_timeの前提)
+	obj_subt_time = objc_NowTime - objt_read_time
 	
-	# jsonファイルが未作成 or 最終更新時間が現在の時間ではない
-	if ( read_hour == 32 ) or ( read_hour != now_hour ):
-		tag_pre = ''
-
-		for tag in get_jmahtml():
-			if -1 < tag.find( '<td class="block middle">' ):
-				start = tag.find( '>' ) + 1
-				goal  = tag.find( '</td>' )
-				data  = tag[ start : goal ]
-
-				# 空白があったら終了
-				if data == '&nbsp;':
-					break
+	# 15分以上経過していること(And条件は読み出し日時が現在日時より先の場合の考慮)
+	if( u2c_IntervalSec < obj_subt_time.seconds ) and ( 0 <= obj_subt_time.days ):
+	
+		# 読み出しリトライカウンタ初期化
+		u1t_retry_cnt = 0
+		
+		# chromedriverによる読み出し開始
+		objt_options = Options()
+		
+		objt_options.add_argument( '--headless' )    # ヘッドレスモード有効(画面表示を行わない)(必須)
+		objt_options.add_argument( '--disable-gpu' ) # GPUを使用しない(無いと不安定になる)
+		#options.add_argument( '--no-sandbox' )
+		#options.add_argument( '--disable-dev-shm-usage' )
+		#options.add_argument( '--disable-features=VizDisplayCompositor' )
+		
+		for u1t_loopcnt in range( u1c_RetryCnt ):
+			try:
+				# ChromeのWebDriverオブジェクトを作成する。
+				objt_driver = webdriver.Chrome( options=objt_options )
+				# ページ読み込み
+				objt_driver.get( jma_url )
+				# objt_driver.get()後の描画で指定class(湿度データ)が読み込まれるまでの待機時間(15s)
+				# objt_driver.get()以前に実施すると描画前のhtml読み出しの状態でclass待機するので注意
+				WebDriverWait( objt_driver, 15 ).until( EC.presence_of_element_located( ( By.CLASS_NAME, 'td-normalPressure' ) ) )
 				
-				tag_pre   = tag  # 湿度データ用に前回のhtmlソースを保持
-				temp_data = data
+				### タイムアウトしなかった場合、以下処理続行 ###
+				
+				# ページのソース取得
+				html = objt_driver.page_source
+				src = BeautifulSoup( html, 'html.parser' )
+				# 必要な箇所のみ抽出
+				src = src.find( 'tr', attrs={ 'class':'amd-table-tr-onthedot' } )
+				# 気象データ読み出し
+				strt_temp_data = src.find( 'td', attrs={ 'class':'td-temp' } ).get_text()
+				strt_humi_data = src.find( 'td', attrs={ 'class':'td-humidity' } ).get_text()
+				strt_baro_data = src.find( 'td', attrs={ 'class':'td-normalPressure' } ).get_text()
+				
+				# 数値ではなかった場合の処理(読み出しデータの不備)
+				if not bool( re.compile( '^-?[0-9]+\.?[0-9]*$' ).match( strt_temp_data ) ): # 氷点下(マイナス値)を考慮
+					strt_temp_data = '--.-'
 
-		# 気圧データの切り抜き
-		baro_data = tag_pre[ tag_pre.rfind( '">' ) + 2 : tag_pre.rfind( '</td>' ) ]
+				if not bool( re.compile( "^\d+\.?\d*\Z" ).match( strt_humi_data ) ):
+					strt_humi_data = '--'
 
-		# 湿度データの切り抜き
-		tag_pre = tag_pre[ 0 : tag_pre.rfind( '</td><' ) ]
-		humi_data = tag_pre[ tag_pre.rfind( '>' ) + 1 : ]
+				if not bool( re.compile( "^\d+\.?\d*\Z" ).match( strt_baro_data ) ):
+					strt_baro_data = '----.-'
+				
+				# chromiumを閉じる
+				objt_driver.quit()
+				
+				# 最終更新日時を現在時刻に設定
+				strt_last_update = objc_NowTime.strftime( '%Y-%m-%d %H:%M:%S' )
+				
+				# 読み出し正常終了時
+				break
+			except TimeoutException as te:
+				# 読み出し失敗時(全て失敗しても書き込みは実施)
+				
+				# chromiumを閉じる
+				objt_driver.quit()
+				# 読み出しリトライカウンタ加算
+				u1t_retry_cnt = u1t_retry_cnt + 1
+				# 5秒待ち
+				time.sleep( 5 )
+				# 3回までリトライ
+				continue
+			except Exception as e:
+				# その他のエラー要因(リトライも書き込みもせず終了)
+				
+				# chromiumを閉じる
+				objt_driver.quit()
+				u1t_res_idx = 5
+				return strc_ResText[u1t_res_idx]
+				
+		# リトライ回数をレスポンス用Indexへセット(0～3)
+		u1t_res_idx = u1t_retry_cnt
 		
-		# 数値ではなかった場合の処理
-		if not bool( re.compile( '^-?[0-9]+\.?[0-9]*$' ).match( temp_data ) ): # 氷点下(マイナス値)を考慮
-			temp_data = '--.-'
-
-		if not bool( re.compile( "^\d+\.?\d*\Z" ).match( humi_data ) ):
-			humi_data = '--'
-
-		if not bool( re.compile( "^\d+\.?\d*\Z" ).match( baro_data ) ):
-			baro_data = '----.-'
-		
-		# JSONファイル作成
-		last_update = last_access
-		wjson_data = cl.OrderedDict()
-		wjson_data[ 'last_update' ] = cl.OrderedDict( { 'timestamp':last_update } )
-		wjson_data[ 'last_access' ] = cl.OrderedDict( { 'timestamp':last_access } )
-		wjson_data[ 'weather' ]     = cl.OrderedDict( { 'temp':temp_data, 'humi':humi_data, 'baro':baro_data } )
+		# JSONファイル作成(ページの読み出しが全て失敗した場合、前回更新日時or初期日時と全てハイフンのデータをセット)
+		objt_wjson_data = cl.OrderedDict()
+		objt_wjson_data[ 'last_update' ] = cl.OrderedDict( { 'timestamp':strt_last_update } )
+		objt_wjson_data[ 'weather' ]     = cl.OrderedDict( { 'temp':strt_temp_data, 'humi':strt_humi_data, 'baro':strt_baro_data } )
 		
 		# JSONファイルへ出力(新規作成 or 上書き)
 		with open( jma_path, mode='w' ) as f:
-			# f.write( json.dumps( json_data ) ) # 運用向け(インデント無し)
-			f.write( json.dumps( wjson_data, indent=4 ) )
+			f.write( json.dumps( objt_wjson_data, indent=4 ) )
 		
-		# レスポンス
-		res = '(update)'
-	
-	# jsonファイルが作成済み and 最終更新時間が現在の時間である
-	else:
-		# jsonファイルが作成済みであるため読み出しの失敗は想定しない
-		with open( jma_path, mode='r') as f:
-			# 保存済みのデータを取得
-			rjson_data = json.load( f )
-			temp_data = rjson_data[ 'weather' ][ 'temp' ]
-			humi_data = rjson_data[ 'weather' ][ 'humi' ]
-			baro_data = rjson_data[ 'weather' ][ 'baro' ]
-		
-		wjson_data = cl.OrderedDict()
-		wjson_data[ 'last_update' ] = cl.OrderedDict( { 'timestamp':last_update } )
-		wjson_data[ 'last_access' ] = cl.OrderedDict( { 'timestamp':last_access } )
-		wjson_data[ 'weather' ]     = cl.OrderedDict( { 'temp':temp_data, 'humi':humi_data, 'baro':baro_data } )
-		
-		# JSONファイルへ出力(新規作成 or 上書き)
-		with open( jma_path, mode='w' ) as f:
-			# f.write( json.dumps( json_data ) ) # 運用向け(インデント無し)
-			f.write( json.dumps( wjson_data, indent=4 ) )
-		
-		# レスポンス
-		res = '(not update)'
+	# レスポンス
+	return strc_ResText[u1t_res_idx]
 
-	# 送信用データの作成
-	send_data1 = humi_data + '%  ' + temp_data
-	send_data2 = baro_data + 'hPa ' + humi_data + '% ' + temp_data
-
-	# UDP送信
-	with socket.socket( socket.AF_INET, socket.SOCK_DGRAM ) as sock:
-		sock.sendto( send_data1.encode(), ( udp_addr1, udp_port1 ) )
-
-	with socket.socket( socket.AF_INET, socket.SOCK_DGRAM ) as sock:
-		sock.sendto( send_data2.encode(), ( udp_addr2, udp_port2 ) )
-	
-	return res
 
 # 処理内容      ：Webページアクセス、JSON保存
 # 備考          ：天気予報データを取得後、JSONファイルへ保存
 #                 ページレイアウトが変更される場合があるので都度修正が必要
 # 依存ライブラリ：requests, bs4, json, collections
-def create_wnewsdata():
+def update_wnews():
 	# レスポンス
 	res = False
 	# データ取得
