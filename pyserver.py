@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # coding: UTF-8
-import time, os, datetime
+import time, datetime
 import collections as cl
 from flask import Flask, render_template, request, jsonify
+from pathlib import Path
 
 from py_func.jma import *
 from py_func.wnews import *
 from py_func.datelist import *
 from py_func.alert import *
 
-# ログファイル保存先
-FILE_NAME = 'log/python_log.txt'
+# 実行ファイルの絶対パスの親ディレクトリ+出力ファイルの相対パス
+FILE_NAME = Path( Path( __file__ ).resolve().parent, 'log/python_log.txt' )
 # 関数辞書(リクエストをキーにして呼び出し)
 func_dict = {
 	'get_jma'      : get_jma,
@@ -61,7 +62,7 @@ def RcvPost():
 		# 正常な要求があった場合
 		if req != '':
 			# 日付+IP+リクエストでログ書き込み
-			if os.path.isfile( FILE_NAME ):
+			if Path( FILE_NAME ).exists():
 				# 既にファイルが存在する場合は追記
 				with open( FILE_NAME, mode='a') as f:
 					write_log = log_time + ' ' + 'IP=' + host.ljust( 13 ) + ' ' + 'POST=' + str( req ).ljust( 19 ) + ' ' + 'TIME=' + proc_time + '\n'
@@ -69,7 +70,7 @@ def RcvPost():
 			else:
 				# 存在しない場合は新規作成
 				# フォルダが無い場合作成(作成済みでもok)
-				os.makedirs( os.path.dirname( FILE_NAME ), exist_ok=True )
+				Path( Path( FILE_NAME ).parent ).mkdir( exist_ok=True )
 				# ファイルを新規作成
 				with open( FILE_NAME, mode='w') as f:
 					write_log = log_time + ' ' + 'IP=' + host.ljust( 13 ) + ' ' + 'POST=' + str( req ).ljust( 19 ) + ' ' + 'TIME=' + proc_time + '\n'

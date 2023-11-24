@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # coding: UTF-8
-import os, re, json, datetime
+import re, json, datetime
 from bs4 import BeautifulSoup
 import collections as cl
+from pathlib import Path
 # chromium用 Selenium
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -13,14 +14,15 @@ from selenium.webdriver.support import expected_conditions as EC
 # chromium用 Selenium タイムアウト例外用
 from selenium.common.exceptions import TimeoutException
 
-FILE_NAME = './json/jma.json'
+# 実行ファイルの絶対パスの親ディレクトリ×2+出力ファイルの相対パス
+FILE_NAME = Path( Path( Path( __file__ ).resolve().parent ).parent, 'json/jma.json' )
 
 # 処理内容      ：Webページアクセス、データ抽出・保存
 # 引数          ：要求, 応答テキスト
 # 戻り値        ：要求, 応答テキスト
 # 備考          ：温度・湿度・気圧のテキストデータを抽出後、JSONファイルへ保存
 #                 ただし、同一時間内のWebページアクセスは5分経過するまで不可(JSONファイル保存データで制御)
-# 依存ライブラリ：re, datetime, json, collections, selenium, bs4, os
+# 依存ライブラリ：re, datetime, json, collections, selenium, bs4, pathlib
 def update_jma( req, rcv_txt ):
 	# 気象庁 アメダス(10分毎)URL
 	##### ↓↓↓使用環境により適宜編集↓↓↓ #####
@@ -54,10 +56,10 @@ def update_jma( req, rcv_txt ):
 	u1t_res_idx = 2
 
 	# フォルダが無い場合作成(作成済みでもok)
-	os.makedirs( os.path.dirname( FILE_NAME ), exist_ok=True )
+	Path( Path( FILE_NAME ).parent ).mkdir( exist_ok=True )
 
 	# 日時データ取得
-	if os.path.isfile( FILE_NAME ):
+	if Path( FILE_NAME ).exists():
 		with open( FILE_NAME, mode='r') as f:
 			# 最終保存時刻を取得
 			objt_rjson_data = json.load( f )
@@ -68,6 +70,7 @@ def update_jma( req, rcv_txt ):
 	objt_subt_time = objc_NowTime - objt_read_time
 	
 	# 5分以上経過していること(And条件は読み出し日時が現在日時より先の場合の考慮)
+	# 初回実行時は00:00～00:05の間、処理不可
 	if( u2c_IntervalSec < objt_subt_time.seconds ) and ( 0 <= objt_subt_time.days ):
 		
 		# chrome設定
@@ -155,9 +158,9 @@ def update_jma( req, rcv_txt ):
 # 引数          ：要求, 応答テキスト
 # 戻り値        ：要求, 応答テキスト
 # 備考          ：JSONファイルを読み出し、読みだしたテキストを返す
-# 依存ライブラリ：json, os
+# 依存ライブラリ：json, pathlib
 def get_jma( req, rcv_txt ):
-	if os.path.isfile( FILE_NAME ):
+	if Path( FILE_NAME ).exists():
 		# 日時データ取得
 		with open( FILE_NAME, mode='r') as f:
 			# jsonファイルよりデータ取得
@@ -179,9 +182,9 @@ def get_jma( req, rcv_txt ):
 # 引数          ：要求, 応答テキスト
 # 戻り値        ：要求, 応答テキスト
 # 備考          ：JSONファイルを読み出し、読みだしたテキストを返す
-# 依存ライブラリ：json, os
+# 依存ライブラリ：json, pathlib
 def get_jma_l( req, rcv_txt ):
-	if os.path.isfile( FILE_NAME ):
+	if Path( FILE_NAME ).exists():
 		# 日時データ取得
 		with open( FILE_NAME, mode='r') as f:
 			# jsonファイルよりデータ取得

@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 # coding: UTF-8
-import os, json, datetime, calendar
+import json, datetime, calendar
 import collections as cl
+from pathlib import Path
 
-FILE_NAME = './json/datelist.json'
+# 実行ファイルの絶対パスの親ディレクトリ×2+出力ファイルの相対パス
+FILE_NAME = Path( Path( Path( __file__ ).resolve().parent ).parent, 'json/datelist.json' )
 
 # 処理内容      ：日時データ取得
 # 引数          ：要求, 応答テキスト
 # 戻り値        ：要求, 応答テキスト
 # 備考          ：ESP系マイコンへスリープ可否(0または1)を通知
-# 依存ライブラリ：json, datetime
+# 依存ライブラリ：json, datetime, pathlib
 def res_datelist( req, rcv_txt ):
 	try:
 		# 日時データ取得
-		if os.path.isfile( FILE_NAME ):
+		if Path( FILE_NAME ).exists():
 			dlist_data = open( FILE_NAME, 'r' )
 		else:
 			create_dlist()
@@ -41,10 +43,10 @@ def res_datelist( req, rcv_txt ):
 
 # 処理内容      ：日時データ作成
 # 備考          ：現在の年よりESP系マイコン通知用のデータを作成
-# 依存ライブラリ：os, json, datetime, collections, calendar
+# 依存ライブラリ：pathlib, json, datetime, collections, calendar
 def create_dlist():
 	# フォルダが無い場合作成(作成済みでもok)
-	os.makedirs( os.path.dirname( FILE_NAME ), exist_ok=True )
+	Path( Path( FILE_NAME ).parent ).mkdir( exist_ok=True )
 	
 	# 月曜日始めでオブジェクト作成
 	cal = calendar.Calendar( firstweekday=6 )

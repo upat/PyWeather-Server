@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 # coding: UTF-8
-import requests, os, json, datetime
+import requests, json, datetime
 from bs4 import BeautifulSoup
 import collections as cl
+from pathlib import Path
 
-FILE_NAME = './json/wnews.json'
+# 実行ファイルの絶対パスの親ディレクトリ×2+出力ファイルの相対パス
+FILE_NAME = Path( Path( Path( __file__ ).resolve().parent ).parent, 'json/wnews.json' )
 
 # 処理内容      ：Webページアクセス、JSON保存
 # 引数          ：要求, 応答テキスト
 # 戻り値        ：要求, 応答テキスト
 # 備考          ：天気予報データを取得後、JSONファイルへ保存
 #                 ページレイアウトが変更される場合があるので都度修正が必要
-# 依存ライブラリ：requests, bs4, json, collections, os, datetime
+# 依存ライブラリ：requests, bs4, json, collections, pathlib, datetime
 def update_wnews( req, rcv_txt ):
 	# ウェザーニュース HTML版
 	##### ↓↓↓使用環境により適宜編集↓↓↓ #####
@@ -97,7 +99,7 @@ def update_wnews( req, rcv_txt ):
 			json_data[ time_list[cnt] ] = cl.OrderedDict( { 'temp':temp_list[cnt], 'weather':img_list[cnt] } )
 		
 		# フォルダが無い場合作成(作成済みでもok)
-		os.makedirs( os.path.dirname( FILE_NAME ), exist_ok=True )
+		Path( Path( FILE_NAME ).parent ).mkdir( exist_ok=True )
 
 		# JSONファイルへ出力(新規作成 or 上書き)
 		with open( FILE_NAME, mode='w' ) as f:
@@ -116,9 +118,9 @@ def update_wnews( req, rcv_txt ):
 # 引数          ：要求, 応答テキスト
 # 戻り値        ：要求, 応答テキスト
 # 備考          ：JSONファイルを読み出し、読みだしたテキストを返す
-# 依存ライブラリ：json, os
+# 依存ライブラリ：json, pathlib
 def get_wnews( req, rcv_txt ):
-	if os.path.isfile( FILE_NAME ):
+	if Path( FILE_NAME ).exists():
 		# 日時データ取得
 		with open( FILE_NAME, mode='r') as f:
 			# jsonファイルよりデータ取得
