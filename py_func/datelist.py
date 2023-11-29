@@ -17,15 +17,15 @@ def res_datelist( req, rcv_txt ):
 	if not Path( FILE_NAME ).exists():
 		create_dlist()
 		req = req + '(Create)'
-		# ファイル生成確認
-		if not Path( FILE_NAME ).exists():
-			# エラー時
-			rcv_txt = '1'
-			req = req + '(NG)'
-			return req, rcv_txt
 	
 	# 日時データ取得
-	dlist_data = open( FILE_NAME, 'r' )
+	try:
+		dlist_data = open( FILE_NAME, 'r' )
+	except:
+		# エラー時
+		rcv_txt = '1'
+		req = req + '(NG)'
+		return req, rcv_txt
 	json_data = json.load( dlist_data )
 	# 現在日時取得
 	now = datetime.datetime.now()

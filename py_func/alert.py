@@ -25,7 +25,6 @@ def tweet( text ):
 		text = { 'text' : text }
 		# ツイートする
 		req_text = twitter.post( ENDPOINT, json = text )
-		print(req_text)
 	except:
 		pass
 
