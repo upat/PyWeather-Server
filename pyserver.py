@@ -20,7 +20,8 @@ func_dict = {
 	'get_wnews'    : get_wnews,
 	'update_wnews' : update_wnews,
 	'datelist'     : res_datelist,
-	'temp_alert'   : temp_alert
+	'temp_alert'   : temp_alert,
+	'inv_datelist' : inversion_datelist
 }
 
 app = Flask( __name__ )
