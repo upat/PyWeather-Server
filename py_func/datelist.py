@@ -34,9 +34,10 @@ def res_datelist( req, rcv_txt ):
 	if json_data['year'] != str( now.year ):
 		# 日時データ作成
 		create_dlist()
+		req = req + '(Create)'
 		# 辞書を初期化して再読み込み
 		json_data = cl.OrderedDict()
-		dlist_data = open( dlist_path, 'r' )
+		dlist_data = open( FILE_NAME, 'r' )
 		json_data = json.load( dlist_data )
 	
 	# 月・日から対象のデータを抽出(0(許可)または1(禁止))
@@ -123,7 +124,7 @@ def inversion_datelist( req, rcv_txt ):
 			f.write( json.dumps( json_data, indent=4 ) )
 	else:
 		# 応答テキスト(エラー時)
-		rcv_txt = 'fail(old)'
+		rcv_txt = 'fail(unknown)'
 		req = req + '(NG)'
 	
 	return req, rcv_txt
