@@ -9,6 +9,7 @@ from py_func.jma import *
 from py_func.wnews import *
 from py_func.datelist import *
 from py_func.alert import *
+from py_func.hdd_info import *
 
 # 実行ファイルの絶対パスの親ディレクトリ+出力ファイルの相対パス
 FILE_NAME = Path( Path( __file__ ).resolve().parent, 'log/python_log.txt' )
@@ -21,7 +22,8 @@ func_dict = {
 	'update_wnews' : update_wnews,
 	'datelist'     : res_datelist,
 	'temp_alert'   : temp_alert,
-	'inv_datelist' : inversion_datelist
+	'inv_datelist' : inversion_datelist,
+	'hdd_info'     : read_hdd_data
 }
 
 app = Flask( __name__ )
