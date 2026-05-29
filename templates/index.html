@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>
+Schedule
+</title>
+</head>
+<body>
+{% if html_data.message %}
+<div>
+{{ html_data.message }}
+</div>
+{% else %}
+<h1>
+<a href="/?month={{ html_data.prev_month }}">←</a>
+ {{ html_data.year }}年 {{ html_data.month }}月 
+<a href="/?month={{ html_data.next_month }}">→</a>
+</h1>
+<form method="POST">
+{% for item in html_data.day_list %}
+<div>
+{{ item.day }}日({{ item.weekday }})
+<input
+    type="checkbox"
+    name="{{ item.day }}"
+    {% if item.checked %}
+    checked
+    {% endif %}
+>
+</div>
+{% endfor %}
+<br>
+<button type="submit">更新</button>
+{% if update_result %}
+<div>
+    {{ update_result }}
+</div>
+{% endif %}
+</form>
+{% endif %}
+</body>
+</html>
