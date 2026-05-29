@@ -1,140 +1,203 @@
 #!/usr/bin/env python3
 # coding: UTF-8
-import subprocess, re, shutil, datetime
+import subprocess, shutil, datetime, time
 from pathlib import Path
 
 # 実行ファイルの絶対パスの親ディレクトリ×2+出力ファイルの相対パス
-FILE_NAME = Path( Path( Path( __file__ ).resolve().parent ).parent, 'log/hdd_log.txt' )
+FILE_NAME = Path(__file__).resolve().parent.parent / 'log' / 'hdd_log.txt'
+# HDDデバイス名
+##### ↓↓↓使用環境により適宜編集↓↓↓ #####
+HDD_NAME = 'WD20EZRX'
+##### ↑↑↑使用環境により適宜編集↑↑↑ #####
 
 # 処理内容      ：HDD情報取得
-# 引数          ：要求, 応答テキスト
-# 戻り値        ：要求, 応答テキスト
-# 備考          ：デバイス名から有効なパスを取得、HDD情報を出力
-# 依存ライブラリ：subprocess, re, pathlib, datetime
-def read_hdd_data( req, rcv_txt ):
-	# HDDデバイス名
-	##### ↓↓↓使用環境により適宜編集↓↓↓ #####
-	HDD_NAME = 'WD20EZRX'
-	##### ↑↑↑使用環境により適宜編集↑↑↑ #####
-	
+# 引数          ：-
+# 戻り値        ：実行結果
+# 備考          ：HDDのSMART情報と容量情報を取得して出力
+# 依存ライブラリ：subprocess, pathlib, datetime
+def log_info():
 	# HDD情報辞書
 	hdd_info = {
-		'total' : '-1', # HDDの全容量
-		'free'  : '-1', # HDDの空き容量
-		'rs_ct' : '-1', # 代替処理済のセクタ数
-		'temp'  : '-1', # HDD温度情報
-		'cps'   : '-1', # 代替処理保留中のセクタ数
-		'err'   : True  # コマンド実行結果
+		'total'  : 0.0,          # HDDの全容量
+		'free'   : 0.0,          # HDDの空き容量
+		'usage'  : 0.0,          # HDDの使用率
+		'status' : 'no_device',  # HDD健康状態
+		'temp'   : 0,            # HDD温度情報
+		'result' : True          # コマンド実行結果
 	}
 	
-	# partedコマンドでディスク情報一覧を取得
-	parted_run = subprocess.run( ['sudo', 'parted', '-l'], capture_output=True, text=True )
-	if parted_run.returncode != 0: # 実行エラー
-		return hdd_info
-	parted_stdout = parted_run.stdout.split( '\n' )
-	
-	device_path = ''
-	# partedコマンド結果からHDD_NAMEを含む行の次の行(ディスク名)を取得(indexを逆引きで取得)
-	for txt in parted_stdout:
-		if HDD_NAME in re.sub( ' ', '', txt ): # WD20EZRXは『WD 20EZRX』で読み出されるため半角スペース除去
-			device_path = parted_stdout[ parted_stdout.index( txt ) + 1 ]
-			device_path = device_path.split( ' ' )[1][:-1] # 半角スペースで分割+末尾のコロン除去
-			break
-	
-	# 有効なパスであれば処理続行
-	if ( device_path is not '' ) and ( Path( device_path ).exists() ):
-		# ディスクのマウント場所を取得(開発環境では2番目が多いためディスク名末尾に固定で2を追加)
-		findmnt_run = subprocess.run( ['findmnt', device_path + '2'], capture_output=True, text=True )
-		if findmnt_run.returncode != 0: # 実行エラー
-			return hdd_info
-		findmnt_stdout = findmnt_run.stdout.split( '\n' )
-		
-		# 1番目のパス名(マウント先)を取得
-		device_mnt = [ txt for txt in findmnt_stdout if txt.startswith( '/' ) ]
-		device_mnt = device_mnt[0].split( ' ' )[0] # 半角スペースで分割
-		
-		# 有効なパスであれば処理続行
-		if ( device_mnt is not '' ) and ( Path( device_mnt ).exists() ):
-			# SMART情報取得
-			hdd_info.update( read_smart( device_path ) )
-			# 容量情報取得
-			hdd_info.update( read_disk_size( device_mnt ) )
-	
-	# 現在日時取得
-	log_time = datetime.datetime.now().strftime( '%Y-%m-%d %H:%M:%S' )
-	
-	# 代替処理済のセクタ数または代替処理保留中のセクタ数が0より大きい
-	if ( int( hdd_info['rs_ct'] ) > 0 ) or ( int( hdd_info['cps'] ) > 0 ):
-		hdd_err = 'error'
-	else:
-		hdd_err = 'normal'
+	# HDDパス取得
+	(dev_path, mnt_path) = find_mntpath()
+	if dev_path:
+		# SMART情報取得
+		hdd_info.update(get_smart(dev_path))
+		# 容量情報取得
+		hdd_info.update(get_usage(mnt_path))
 	
 	# ログ出力(空き容量、HDD温度、エラー有無)
-	if not hdd_info['err']:
-		if Path( FILE_NAME ).exists():
-			# 既にファイルが存在する場合は追記
-			with open( FILE_NAME, mode='a') as f:
-				write_log = log_time + ' Free:' + hdd_info['free'].ljust( 8 ) + ' Temp:' + ( hdd_info['temp'] + '℃' ).ljust( 3 ) + ' Status:' + hdd_err + '\n'
-				f.write( write_log )
-		else:
-			# 存在しない場合は新規作成
-			# フォルダが無い場合作成(作成済みでもok)
-			Path( Path( FILE_NAME ).parent ).mkdir( exist_ok=True )
-			# ファイルを新規作成
-			with open( FILE_NAME, mode='w') as f:
-				write_log = log_time + ' Free:' + hdd_info['free'].ljust( 8 ) + ' Temp:' + ( hdd_info['temp'] + '℃' ).ljust( 3 ) + ' Status:' + hdd_err + '\n'
-				f.write( write_log )
+	if hdd_info['result']:
+		# フォルダが無い場合作成(作成済みでもok)
+		FILE_NAME.parent.mkdir(parents=True, exist_ok=True)
+		# ファイルを新規作成、既にファイルが存在する場合は追記
+		with open(FILE_NAME, mode='a') as f:
+			log_txt = (
+				f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]" # 現在日時
+				f" Free:{hdd_info['free']:>6}/{hdd_info['total']:>6}GB({hdd_info['usage']:>5}%)"
+				f" Temp:{hdd_info['temp']:>2}℃"
+				f" Status:{hdd_info['status']}\n"
+			)
+			f.write(log_txt)
 	else:
-		# 情報取得に失敗した場合は実行ログに何も残さない
-		req = ''
-
-	return req, rcv_txt
+		# 情報取得に失敗した場合
+		return False
+	
+	return True
 
 # 処理内容      ：SMART情報取得
-# 引数          ：ドライブパス
+# 引数          ：HDDのデバイス名
+# 戻り値        ：処理結果
 # 備考          ：指定ドライブのSMART情報を取得
-# 依存ライブラリ：subprocess, re
-def read_smart( device_path ):
+# 依存ライブラリ：subprocess
+def get_smart(dev_path):
 	# smartmontoolsよりHDD温度情報の取得
-	# sudo smartctl -a [デバイス名] -d sat
-	smartctl_run = subprocess.run( ['sudo', 'smartctl', '-a', device_path, '-d', 'sat'], capture_output=True, text=True )
-	if smartctl_run.returncode != 0:
+	# sudo smartctl -a [HDDのデバイス名] -d sat
+	smartctl_run = subprocess.run(['sudo', 'smartctl', '-a', dev_path, '-d', 'sat'], capture_output=True, text=True)
+	# smartctlのコマンド実行エラーだけを拾う
+	if smartctl_run.returncode & 0x03:
 		# エラー有り
-		data = { 'err' : True }
+		data = {
+			'result' : False,
+			'status' : 'no_data'
+		}
 		return data
-	smartctl_stdout = smartctl_run.stdout.split( '\n' )
+	smartctl_stdout = smartctl_run.stdout.splitlines()
 	
-	# 代替処理済のセクタ数の数値のみトリミング
-	rs_ct = [ x for x in smartctl_stdout if x.startswith( '  5 Reallocated_Sector_Ct' ) ]
-	rs_ct = re.sub( ' ', '', rs_ct[0][-3:] )
+	try:
+		# 代替処理済のセクタ数の数値のみトリミング
+		rsc = [x for x in smartctl_stdout if x.startswith('  5 Reallocated_Sector_Ct')]
+		rsc = int(rsc[0].split()[-1]) # 末尾の生の値
+		# HDD温度情報の数値のみトリミング
+		temp = [x for x in smartctl_stdout if x.startswith('194 Temperature_Celsius')]
+		temp = int(temp[0].split()[-1]) # 末尾の生の値
+		# 代替処理保留中のセクタ数の数値のみトリミング
+		cps = [x for x in smartctl_stdout if x.startswith('197 Current_Pending_Sector')]
+		cps = int(cps[0].split()[-1]) # 末尾の生の値
+		# 回復不能セクタ数の数値のみトリミング
+		ou = [x for x in smartctl_stdout if x.startswith('198 Offline_Uncorrectable')]
+		ou = int(ou[0].split()[-1]) # 末尾の生の値
+	except Exception:
+		# エラー有り
+		data = {
+			'result' : False,
+			'status' : 'no_data'
+		}
+		return data
 	
-	# HDD温度情報の数値のみトリミング
-	temp = [ x for x in smartctl_stdout if x.startswith( '194 Temperature_Celsius' ) ]
-	temp = re.sub( ' ', '', temp[0][-3:] )
+	# いずれかの生の値が0で無ければエラー判定
+	if (rsc + cps + ou) > 0:
+		status = 'error'
+	else:
+		status = 'normal'
 	
-	# 代替処理保留中のセクタ数の数値のみトリミング
-	cps = [ x for x in smartctl_stdout if x.startswith( '197 Current_Pending_Sector' ) ]
-	cps = re.sub( ' ', '', cps[0][-3:] )
-	
-	data = { 'rs_ct' : rs_ct, 'temp' : temp, 'cps' : cps, 'err' : False }
+	data = {
+		'status' : status,
+		'temp'   : temp,
+		'result' : True
+	}
 	
 	return data
 	
 # 処理内容      ：容量情報取得
-# 引数          ：ドライブパス
-# 備考          ：指定ドライブの総容量、空き容量を取得
+# 引数          ：HDDのパス
+# 戻り値        ：処理結果
+# 備考          ：HDDの容量関連の情報を取得
 # 依存ライブラリ：shutil
-def read_disk_size( device_path ):	
+def get_usage(mnt_path):
+	# デバイス情報取得
+	usage_info = shutil.disk_usage(mnt_path)
 	# HDDの総容量
-	total = shutil.disk_usage( device_path ).total
-	total = round( total / ( 1024 * 1024 * 1024 ), 1 )
-	total = str( total ) + 'GB'
-	
+	total = usage_info.total
+	total = round(total / (1024 ** 3), 1)
 	# HDDの空き容量
-	free = shutil.disk_usage( device_path ).free
-	free = round( free / ( 1024 * 1024 * 1024 ), 1 )
-	free = str( free ) + 'GB'
+	free = usage_info.free
+	free = round(free / (1024 ** 3), 1)
+	# HDDの使用率
+	usage = round((1 - (free / total)) * 100, 1)
 	
-	data = { 'total' : total, 'free' : free }
+	# コマンドは実行していないので実行結果は更新しない
+	data = {
+		'total' : total,
+		'free'  : free,
+		'usage' : usage
+	}
 	
 	return data
+
+# 処理内容      ：HDDパス取得
+# 引数          ：-
+# 戻り値        ：HDDデバイス名、パス
+# 備考          ：HDDのデバイス名とパスを取得する
+# 依存ライブラリ：subprocess
+def find_mntpath():
+	# /dev/disk/by-id直下のシンボリックリンクからデバイス名を取得
+	path_list = []
+	for p in Path('/dev/disk/by-id').iterdir():
+		# 指定した文字列を含むシンボリックリンクを検索
+		if HDD_NAME in p.name:
+			path_list.append(str(p.resolve())) # デバイス名のリストを作成
+	# デバイス名のリストが空でなければ続行
+	if path_list:
+		for p in path_list:
+			# デバイス名からパスを取得(オプションでヘッダー非表示、TARGETのみ表示を指定)
+			# コマンド実行エラーが拾えない(該当なしでもreturncode != 0になる)
+			findmnt_run = subprocess.run(['findmnt', '-n', '-o', 'TARGET', p], capture_output=True, text=True)
+			findmnt_res = findmnt_run.stdout.strip()
+			# 基本的に1デバイスで1つのパスしか設定しない運用のため、先頭のものを使用
+			if findmnt_res:
+				return p, findmnt_res
+	
+	# 何も見つけられなかった時
+	return '', ''
+
+# 処理内容      ：HDDスリープ処理
+# 引数          ：実行フラグ
+# 戻り値        ：実行結果
+# 備考          ：HDDをアンマウントし、HDDの電源も落とす
+# 依存ライブラリ：subprocess, time
+def umount_hdd(flag):
+	# 0なら実行
+	if flag == '0':
+		# HDDパス取得
+		(dev_path, mnt_path) = find_mntpath()
+		if dev_path:
+			# syncコマンド
+			sync_run = subprocess.run(['sync'], capture_output=True, text=True)
+			if sync_run.returncode != 0:
+				return False
+			time.sleep(1) # 1s待ち
+			# umountコマンド
+			umount_run = subprocess.run(['sudo', 'umount', mnt_path], capture_output=True, text=True)
+			if umount_run.returncode != 0:
+				return False
+			time.sleep(1) # 1s待ち
+			#unbindコマンド
+			unbind_run = subprocess.run(
+				['sudo', 'tee', '/sys/bus/usb/drivers/usb/unbind'],
+				input='1-1.1.3', # udevadm info --query=path --name=dev_pathで確認可
+				capture_output=True,
+				text=True
+			)
+			if unbind_run.returncode != 0:
+				return False
+			# hub-ctrlコマンド(lsusb -tで確認可)
+			hubctrl_run = subprocess.run(
+				['sudo', 'hub-ctrl', '-b', '1', '-d', '3', '-P', '3', '-p', '0'],
+				capture_output=True,
+				text=True
+			)
+			if hubctrl_run.returncode != 0:
+				return False
+		else:
+			return False
+	
+	return True
