@@ -31,9 +31,7 @@
         | icalendar | 7.1.2 |
         | selenium | 4.44.0 |
 - ESP32+ILI9341(クライアント)
-    - [ntp_clock_tft_esp32](https://github.com/upat/ntp_clock_tft_esp32)
-- ESP8266+SSD1306(クライアント)
-    - [ntp_clock](https://github.com/upat/ntp_clock)
+    - [NTP_Clock](https://github.com/upat/ntp_clock)
 
 使い方(あくまで参考例のため、ファイルパスやIPアドレスの編集必須)
 ---
