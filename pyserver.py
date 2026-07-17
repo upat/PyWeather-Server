@@ -3,12 +3,13 @@
 import time, datetime
 from dataclasses import dataclass
 from typing import ClassVar
-from flask import Flask, render_template, request, send_file
+from flask import Flask, render_template, request, send_file, jsonify
 from pathlib import Path
 
 from lib import jma
 from lib import datelist
 from lib import hdd_info
+from lib import nowplaying
 
 # ログ出力用dataclass
 @dataclass
@@ -69,6 +70,7 @@ class LogData:
 			f.write(log_text)
 
 app = Flask(__name__)
+app.json.ensure_ascii = False
 
 # web表示処理
 @app.route('/', methods=['GET', 'POST'])
@@ -176,6 +178,14 @@ def exec_createics():
 	# レスポンス
 	return '', 204 # No Contentで返す
 
+# nowplaying更新 POSTメソッド
+@app.route('/update_np', methods=['POST'])
+def exec_updatenp():
+	# 頻繁に使用するのでログには残さない
+	nowplaying.update()
+	# レスポンス
+	return '', 204 # No Contentで返す
+
 # 気象データ取得 GETメソッド
 @app.route('/get_jma', methods=['GET'])
 def exec_getjma():
@@ -208,6 +218,13 @@ def exec_getdl():
 	logdata.write_log(result)
 	# レスポンス
 	return response
+
+# nowplaying取得 GETメソッド
+@app.route('/get_np', methods=['GET'])
+def exec_getnp():
+	# 頻繁に使用するのでログには残さない
+	# レスポンス
+	return jsonify(nowplaying.load())
 
 # icsファイル取得
 @app.route('/datelist.ics')
